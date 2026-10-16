@@ -51,6 +51,15 @@ pub const BUMP_MAINTENANCE_TTL: u32 = 100_000;
 // `get_reason_code_analytics`.
 pub const MAX_READER_ENTRIES: u32 = 100;
 
+// ── Stream Duration Bounds (issue #1350) ───────────────────────
+// `create_stream` vests tokens linearly between `start_time` and `end_time`.
+// Pathologically short schedules (a one-second vest) run into division edge
+// cases in the vesting math, and unrealistically long schedules outlive the
+// ledger TTL a stream entry can guarantee. Both bounds are enforced up front
+// so every stored stream has a sane, well-defined vesting window.
+pub const MIN_STREAM_DURATION: u64 = 60; // 1 minute
+pub const MAX_STREAM_DURATION: u64 = 60 * 60 * 24 * 365 * 5; // 5 years
+
 // ── Contract ───────────────────────────────────────────────────
 
 #[contract]
@@ -2461,6 +2470,13 @@ impl OphirPayContract {
         }
         if end_time <= start_time {
             return Err(PaymentError::InvalidAmount);
+        }
+        let duration = end_time - start_time;
+        if duration < MIN_STREAM_DURATION {
+            return Err(PaymentError::StreamDurationTooShort);
+        }
+        if duration > MAX_STREAM_DURATION {
+            return Err(PaymentError::StreamDurationTooLong);
         }
 
         // Transfer total amount from creator to contract (reentrancy-guarded, MEDIUM-4)
