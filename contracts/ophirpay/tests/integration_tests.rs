@@ -3,7 +3,7 @@
 
 use ophirpay_contract::{
     BatchCreateResult, OphirPayContract, OphirPayContractClient, Payment, PaymentError,
-    RefundReasonCode, RefundStatus,
+    RefundReasonCode, RefundStatus, MAX_STREAM_DURATION, MIN_STREAM_DURATION,
 };
 use ophirpay_emitter::{EmitterError, PaymentEventEmitter, PaymentEventEmitterClient};
 use soroban_sdk::testutils::{Address as _, Ledger as _};
@@ -781,20 +781,20 @@ fn test_stream_vesting_overflow_pays_correct_balance_end_to_end() {
         &total,
         &fix.token_id,
         &now,
-        &(now + 4),
+        &(now + 100),
         &String::from_str(&fix.env, "overflow e2e"),
     );
     assert_eq!(stream_id, 1);
 
     // Half-way through the schedule: `total * 2` overflows i128. Before the
     // fix this vested 0, so the recipient could claim nothing at all.
-    fix.env.ledger().set_timestamp(now + 2);
+    fix.env.ledger().set_timestamp(now + 50);
     let claimed = fix.client.claim_stream(&recipient, &stream_id);
     assert!(claimed > 0, "overflow must not collapse vesting to zero");
     assert_eq!(claimed, total / 2);
 
     // Past the end time the remainder is claimable and drains the stream.
-    fix.env.ledger().set_timestamp(now + 100);
+    fix.env.ledger().set_timestamp(now + 150);
     let remainder = fix.client.claim_stream(&recipient, &stream_id);
     assert_eq!(remainder, total - (total / 2));
 
@@ -934,4 +934,73 @@ fn test_unknown_pause_scope_is_rejected() {
 
     // Nothing was written for the unknown id.
     assert_eq!(fix.client.get_paused_scopes().len(), 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 14. STREAM DURATION BOUNDS (issue #1350)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// `create_stream` rejects schedules shorter than `MIN_STREAM_DURATION` and
+/// longer than `MAX_STREAM_DURATION` with dedicated errors, while boundary
+/// values on both ends still initialise normally and rejections leave no
+/// side effects behind.
+#[test]
+fn test_create_stream_duration_bounds() {
+    let fix = TestFixture::new();
+    let creator = Address::generate(&fix.env);
+    let recipient = Address::generate(&fix.env);
+    fix.mint(&creator, 1_000_000);
+    let now = fix.env.ledger().timestamp();
+    let memo = String::from_str(&fix.env, "bounds");
+
+    // One second below the minimum → rejected with the dedicated error.
+    let too_short = fix.client.try_create_stream(
+        &creator,
+        &recipient,
+        &1_000i128,
+        &fix.token_id,
+        &now,
+        &(now + MIN_STREAM_DURATION - 1),
+        &memo,
+    );
+    assert_eq!(too_short, Err(Ok(PaymentError::StreamDurationTooShort)));
+
+    // One second beyond the maximum → rejected.
+    let too_long = fix.client.try_create_stream(
+        &creator,
+        &recipient,
+        &1_000i128,
+        &fix.token_id,
+        &now,
+        &(now + MAX_STREAM_DURATION + 1),
+        &memo,
+    );
+    assert_eq!(too_long, Err(Ok(PaymentError::StreamDurationTooLong)));
+
+    // The boundaries themselves are valid (inclusive on both ends).
+    let min_ok = fix.client.create_stream(
+        &creator,
+        &recipient,
+        &1_000i128,
+        &fix.token_id,
+        &now,
+        &(now + MIN_STREAM_DURATION),
+        &memo,
+    );
+    assert_eq!(min_ok, 1);
+
+    let max_ok = fix.client.create_stream(
+        &creator,
+        &recipient,
+        &1_000i128,
+        &fix.token_id,
+        &now,
+        &(now + MAX_STREAM_DURATION),
+        &memo,
+    );
+    assert_eq!(max_ok, 2);
+
+    // Rejected attempts left no streams or locked funds behind.
+    assert_eq!(fix.client.get_stream_count(), 2);
+    assert_eq!(fix.client.get_locked_balance(), 2_000);
 }
