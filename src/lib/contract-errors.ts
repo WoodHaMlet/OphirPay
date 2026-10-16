@@ -5,7 +5,7 @@
 /**
  * Soroban contract error decoding utilities.
  * Maps raw contract error codes to human-readable messages.
- * Mirrors the PaymentError enum in contracts/ophirpay/src/errors.rs.
+ * Mirrors the PaymentError enum in contracts/ophirpay/src/lib.rs.
  */
 
 export const CONTRACT_ERROR_MAP: Record<string, string> = {
@@ -318,6 +318,8 @@ export const CONTRACT_ERROR_MAP: Record<string, string> = {
   "307": "Stream accounting invariant violated: refused to pay an inconsistent amount",
   "308": "Pause scope not recognized: unknown scope identifier",
   "309": "Idempotency key was reused for a different payment payload",
+  "310": "Stream duration is too short: the minimum is 60 seconds",
+  "311": "Stream duration is too long: the maximum is 5 years",
 };
 
 /**
@@ -348,5 +350,5 @@ export function decodeContractError(rawError: string): string {
 export function getContractErrorCatalog(): { code: string; message: string }[] {
   return Object.entries(CONTRACT_ERROR_MAP)
     .map(([code, message]) => ({ code, message }))
-    .sort((a, b) => parseInt(a.code, 10) - parseInt(b.code, 10));
+    .sort((a, b) => parseInt(a.code) - parseInt(b.code));
 }
